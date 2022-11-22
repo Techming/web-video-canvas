@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: Viewer.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: Viewer.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * @author Russell Toris - russell.toris@gmail.com
+ */
+import EventEmitter2 from 'eventemitter2';
+import ErrorIcon from './models/ErrorIcon';
+
+const SUPPORTED_ENCODING = ['mjpeg', 'png', 'ros_compressed'];
+
+/**
+ * A Viewer can be used to stream a single MJPEG topic into a canvas.
+ *
+ * Emits the following events:
+ *   * 'warning' - emitted if the given topic is unavailable
+ *   * 'change' - emitted with the topic name that the canvas was changed to
+ *
+ */
+class Viewer extends EventEmitter2 {
+  /**
+   * @param {Object} options - possible keys include:
+   * @param {string} options.divID - the ID of the HTML div to place the canvas in
+   * @param {HTMLCanvasElement} [options.canvas] - (optional) the canvas to render the images to. Will override divID
+   * @param {number} options.width - the width of the canvas
+   * @param {number} options.height - the height of the canvas
+   * @param {string} options.host - the hostname of the MJPEG server
+   * @param {number} [options.port] (optional) - the port to connect to
+   * @param {number} [options.quality] (optional) - the quality of the stream (from 1-100)
+   * @param {string} options.topic - the topic to stream, like '/wide_stereo/left/image_color'
+   * @param {HTMLCanvasElement} [options.overlay] (optional) - a canvas to overlay after the image is drawn
+   * @param {number} [options.refreshRate] (optional) - a refresh rate in Hz, will be converted into milliseconds and take max value between refreshRate and interval
+   * @param {number} [options.interval] (optional) - an interval time in milliseconds, will take max value between refreshRate and interval
+   * @param {boolean} [options.invert] (optional) - if the images are mirrored
+   * @param {string} [options.type] (optional) - the encoding method for the stream, default set to mjpeg
+   * @param {string} [options.src] (optional) - the source URL for the images, passing values will override other params (host, port, quality, etc)
+   */
+  constructor(options) {
+    super();
+    this.divID = options.divID;
+    this.canvas = options.canvas;
+    this.width = options.width;
+    this.height = options.height;
+    this.host = options.host;
+    this.port = options.port || 8080;
+    this.quality = options.quality;
+    this.refreshRate = options.refreshRate || 10;
+    this.interval = options.interval || 30;
+    this.invert = options.invert || false;
+    this.topic = options.topic;
+    this.overlay = options.overlay;
+    this.type = options.type;
+    this.src = options.src;
+
+    // create no image initially
+    this.image = new Image();
+
+    // create the canvas to render to
+    if (this.canvas === undefined) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = this.width;
+      this.canvas.height = this.height;
+      this.canvas.style.background = '#000000';
+      document.getElementById(this.divID).appendChild(this.canvas);
+    } else {
+      this.canvas.width = this.width;
+      this.canvas.height = this.height;
+      this.canvas.style.background = '#000000';
+    }
+
+    const drawInterval = Math.max((1 / this.refreshRate) * 1000, this.interval);
+
+    // grab the initial stream
+    this.changeStream(this.topic);
+
+    // call draw with the given interval or rate
+    setInterval(this.draw.bind(this), drawInterval);
+  }
+
+  /**
+   * A function to draw the image onto the canvas.
+   */
+  draw() {
+    const context = this.canvas.getContext('2d');
+    // clear the canvas
+    context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // check if we have a valid image
+    if (this.image.width * this.image.height > 0) {
+      context.drawImage(this.image, 0, 0, this.width, this.height);
+    } else {
+      // center the error icon
+      // used if there was an error loading the stream
+      const errorIcon = new ErrorIcon();
+      context.drawImage(
+        errorIcon,
+        (this.width - this.width / 2) / 2,
+        (this.height - this.height / 2) / 2,
+        this.width / 2,
+        this.height / 2
+      );
+      this.emit('warning', 'Invalid stream.');
+    }
+
+    // check for an overlay
+    if (this.overlay) {
+      context.drawImage(this.overlay, 0, 0);
+    }
+
+    // silly firefox...
+    if (navigator.userAgent.toLowerCase().indexOf('firefox') > -1) {
+      const aux = this.image.src.split('?killcache=');
+      this.image.src = aux[0] + '?killcache=' + Math.random(42);
+    }
+  }
+
+  /**
+   * Change the stream's topic
+   * @param {string} topic - the topic to change the stream to
+   */
+  changeStream(topic) {
+    this.image = new Image();
+    // create the image to hold the stream
+    if (this.src === undefined) {
+      let src =
+        'http://' + this.host + ':' + this.port + '/stream?topic=' + topic;
+      // add various options
+      src += '&amp;width=' + this.width;
+      src += '&amp;height=' + this.height;
+      if (this.type &amp;&amp; SUPPORTED_ENCODING.includes(this.type)) {
+        src += '&amp;type=' + this.type;
+      }
+      if (this.quality > 0 &amp;&amp; (this.type === 'mjpeg' || !this.type)) {
+        src += '&amp;quality=' + this.quality;
+      }
+      if (this.invert) {
+        src += '&amp;invert=' + this.invert;
+      }
+      this.src = src;
+    }
+
+    this.image.src = this.src;
+
+    // emit an event for the change
+    this.emit('change', topic);
+  }
+}
+
+export default Viewer;
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Button.html">Button</a></li><li><a href="ErrorIcon.html">ErrorIcon</a></li><li><a href="MultiStreamViewer.html">MultiStreamViewer</a></li><li><a href="Viewer.html">Viewer</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.11</a> on Tue Nov 22 2022 23:29:24 GMT+0000 (Coordinated Universal Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
